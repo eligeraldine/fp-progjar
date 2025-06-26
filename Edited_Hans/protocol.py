@@ -14,18 +14,35 @@ def generate_simple_image_b64(width, height, color, shape="square", border_color
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     fill_color = color[:3] + (alpha,)
-    if shape == "square": d.rectangle([0, 0, width, height], fill=fill_color)
-    elif shape == "circle": d.ellipse([0, 0, width, height], fill=fill_color)
-    elif shape == "diamond": d.polygon([(width / 2, 0), (width, height / 2), (width / 2, height), (0, height / 2)], fill=fill_color)
+    outline_color = border_color[:3] + (255,) if border_color else None
+
+    # Draw shapes
+    if shape == "square":
+        d.rectangle([0, 0, width, height], fill=fill_color)
+    elif shape == "circle":
+        d.ellipse([0, 0, width, height], fill=fill_color)
+    elif shape == "diamond":
+        d.polygon([(width / 2, 0), (width, height / 2), (width / 2, height), (0, height / 2)], fill=fill_color)
     elif shape == "door":
         d.rectangle([0, 0, width, height], fill=fill_color)
-        d.ellipse([width*0.7, height*0.4, width*0.9, height*0.6], fill=(50,50,50,255))
+        d.ellipse([width * 0.7, height * 0.4, width * 0.9, height * 0.6], fill=(50, 50, 50, 255))
     elif shape == "brick":
         d.rectangle([0, 0, width, height], fill=fill_color)
-        for i in range(0, height, 10): d.line([(0, i), (width, i)], fill=(fill_color[0]//2, fill_color[1]//2, fill_color[2]//2, 255), width=1)
-        for i in range(0, width, 20): d.line([(i, 0), (i, height)], fill=(fill_color[0]//2, fill_color[1]//2, fill_color[2]//2, 255), width=1)
-    if border_color and border_width > 0:
-        if shape in ["square", "brick", "door"]: d.rectangle([0, 0, width - 1, height - 1], outline=border_color, width=border_width)
+        for i in range(0, height, 10):
+            d.line([(0, i), (width, i)], fill=(fill_color[0] // 2, fill_color[1] // 2, fill_color[2] // 2, 255), width=1)
+        for i in range(0, width, 20):
+            d.line([(i, 0), (i, height)], fill=(fill_color[0] // 2, fill_color[1] // 2, fill_color[2] // 2, 255), width=1)
+
+    # Draw borders on top
+    if outline_color and border_width > 0:
+        if shape == "diamond":
+            d.polygon([(width / 2, 0), (width, height / 2), (width / 2, height), (0, height / 2)], outline=outline_color, width=border_width)
+        elif shape == "circle":
+            d.ellipse([0, 0, width - 1, height - 1], outline=outline_color, width=border_width)
+        elif shape in ["square", "brick", "door"]:
+            d.rectangle([border_width//2 -1, border_width//2 -1, width - border_width//2, height - border_width//2], outline=outline_color, width=border_width)
+
+
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
     return base64.b64encode(buffered.getvalue()).decode('utf-8')
@@ -42,13 +59,17 @@ class PlayerServerProtocol:
         self.levels, self.total_stages = [], 5
         self.scores = {'player_black': 0, 'player_white': 0}
         self.current_level_index, self.match_winner, self.stage_winner, self.start_time, self._next_gem_id = 0, None, None, None, 0
+        self.black_gems_required = 0
+        self.white_gems_required = 0
 
         self.black_player_image_b64 = generate_simple_image_b64(48, 48, (50, 50, 50, 255), "square", (200, 200, 200), 2)
         self.white_player_image_b64 = generate_simple_image_b64(48, 48, (200, 200, 200, 255), "square", (50, 50, 50), 2)
-        self.black_gem_image_b64 = generate_simple_image_b64(20, 20, (50, 50, 50, 255), "diamond")
-        self.white_gem_image_b64 = generate_simple_image_b64(20, 20, (255, 255, 255, 255), "diamond")
-        self.black_hazard_image_b64 = generate_simple_image_b64(100, 50, (20, 20, 20), "square", alpha=200)
-        self.white_hazard_image_b64 = generate_simple_image_b64(100, 50, (230, 230, 230), "square", alpha=200)
+        
+        self.black_gem_image_b64 = generate_simple_image_b64(20, 20, (50, 50, 50, 255), "diamond", border_color=(255, 255, 255), border_width=2)
+        self.white_gem_image_b64 = generate_simple_image_b64(20, 20, (255, 255, 255, 255), "diamond", border_color=(0, 0, 0), border_width=2)
+        self.black_hazard_image_b64 = generate_simple_image_b64(100, 50, (20, 20, 20), "square", border_color=(255, 100, 0), border_width=2, alpha=200)
+        self.white_hazard_image_b64 = generate_simple_image_b64(100, 50, (230, 230, 230), "square", border_color=(255, 100, 0), border_width=2, alpha=200)
+
         self.exit_area_image_b64 = generate_simple_image_b64(80, 80, (50, 200, 50), "door", (20, 100, 20), 2, alpha=200)
         self.wall_image_b64 = generate_simple_image_b64(20, 20, (100, 100, 100), "brick", (50, 50, 50), 1)
 
@@ -58,15 +79,11 @@ class PlayerServerProtocol:
         self.levels = []
         
         # Level 1: Pengenalan Dasar
-        # PERBAIKAN: Menambahkan platform agar goal bisa dijangkau.
         self.levels.append({
             'start_pos': {'black': (50, 532), 'white': (702, 532)},
             'walls': [
-                (0, 580, 800, 20),      # Lantai utama
-                (200, 480, 400, 20),    # Platform 1
-                (300, 380, 200, 20),    # Platform 2
-                (550, 280, 100, 20),    # Platform 3 (BARU)
-                (250, 180, 100, 20),    # Platform 4 (BARU)
+                (0, 580, 800, 20), (200, 480, 400, 20), (300, 380, 200, 20),
+                (550, 280, 100, 20), (250, 180, 100, 20),
             ],
             'hazards': [('white', 300, 560, 100, 20)],
             'gems': [('black', 250, 450), ('white', 500, 450), ('black', 350, 350), ('white', 400, 350)],
@@ -77,7 +94,7 @@ class PlayerServerProtocol:
         self.levels.append({
             'start_pos': {'black': (50, 532), 'white': (702, 532)},
             'walls': [(0, 580, 150, 20), (650, 580, 150, 20), (250, 500, 100, 20), (450, 500, 100, 20), (100, 400, 100, 20), (600, 400, 100, 20), (300, 300, 200, 20)],
-            'hazards': [('black', 150, 560, 500, 20)],
+            'hazards': [('black', 150, 560, 50, 20)],
             'gems': [('black', 270, 470), ('white', 470, 470), ('black', 120, 370), ('white', 620, 370), ('black', 390, 270)],
             'exit': (360, 220, 80, 80)
         })
@@ -113,31 +130,24 @@ class PlayerServerProtocol:
         if level_index >= len(self.levels):
             logging.error(f"Attempted to load invalid level index: {level_index}")
             return
-
         level_data = self.levels[level_index]
         self.current_level_index = level_index
-        
         self.gems.clear(); self.hazards.clear(); self.walls.clear()
         self.black_gems_required = 0; self.white_gems_required = 0
         self._next_gem_id = 0; self.stage_winner = None
-        
         self._place_wall(0, self.map_height - 20, self.map_width, 20)
         self._place_wall(0, 0, 20, self.map_height)
         self._place_wall(self.map_width - 20, 0, 20, self.map_height)
         self._place_wall(0, 0, self.map_width, 20)
-
         for wall in level_data.get('walls', []): self._place_wall(*wall)
         for hazard in level_data.get('hazards', []):
             h_id = f"{hazard[0]}_pool_{len(self.hazards)}"
             self.hazards[h_id] = {'type': hazard[0], 'x': hazard[1], 'y': hazard[2], 'width': hazard[3], 'height': hazard[4]}
         for gem in level_data.get('gems', []): self._place_gem(gem[1], gem[2], gem[0])
-        
         exit_data = level_data.get('exit')
         self.exit_area = {'x': exit_data[0], 'y': exit_data[1], 'width': exit_data[2], 'height': exit_data[3]}
-        
         for pid, player in self.players.items():
             self._reset_player_for_new_stage(player, level_data.get('start_pos'))
-            
         logging.info(f"Server: Level {level_index + 1} loaded.")
 
     def _reset_player_for_new_stage(self, player_data, start_positions):
@@ -176,8 +186,10 @@ class PlayerServerProtocol:
     def _place_gem(self, x, y, gem_type):
         gem_id = f"{gem_type}_gem_{self._next_gem_id}"; self._next_gem_id += 1
         self.gems[gem_id] = {'x': x, 'y': y, 'type': gem_type}
-        if gem_type == 'black': self.black_gems_required += 1
-        else: self.white_gems_required += 1
+        if gem_type == 'black':
+            self.black_gems_required += 1
+        elif gem_type == 'white':
+            self.white_gems_required += 1
         return gem_id
 
     def proses_string(self, command_string):
@@ -227,17 +239,34 @@ class PlayerServerProtocol:
 
     def _get_game_state(self):
         elapsed_time = (time.time() - self.start_time) if self.start_time else 0
-        return {"status": "OK", "players": {p_id:{**p_data} for p_id,p_data in self.players.items()},
-            "gems": [{'id':g_id,**g_data} for g_id,g_data in self.gems.items()],
-            "hazards": [{'id':h_id,**h_data} for h_id,h_data in self.hazards.items()],
-            "walls": [{'id':w_id,**w_data} for w_id,w_data in self.walls.items()],
+        
+        game_info_data = {
+            "current_stage": self.current_level_index + 1,
+            "total_stages": self.total_stages,
+            "scores": self.scores,
+            "elapsed_time": elapsed_time,
+            "stage_winner": self.stage_winner,
+            "match_winner": self.match_winner,
+            "required_gems": {
+                'black': self.black_gems_required,
+                'white': self.white_gems_required
+            }
+        }
+        
+        return {
+            "status": "OK",
+            "players": {p_id: {**p_data} for p_id, p_data in self.players.items()},
+            "gems": [{'id': g_id, **g_data} for g_id, g_data in self.gems.items()],
+            "hazards": [{'id': h_id, **h_data} for h_id, h_data in self.hazards.items()],
+            "walls": [{'id': w_id, **w_data} for w_id, w_data in self.walls.items()],
             "exit_area": self.exit_area,
-            "images": {"black_gem":self.black_gem_image_b64, "white_gem":self.white_gem_image_b64,
-                "black_hazard":self.black_hazard_image_b64, "white_hazard":self.white_hazard_image_b64,
-                "exit":self.exit_area_image_b64, "wall":self.wall_image_b64},
-            "game_info": {"current_stage":self.current_level_index+1, "total_stages":self.total_stages,
-                "scores":self.scores, "elapsed_time":elapsed_time,
-                "stage_winner":self.stage_winner, "match_winner":self.match_winner}}
+            "images": {
+                "black_gem": self.black_gem_image_b64, "white_gem": self.white_gem_image_b64,
+                "black_hazard": self.black_hazard_image_b64, "white_hazard": self.white_hazard_image_b64,
+                "exit": self.exit_area_image_b64, "wall": self.wall_image_b64
+            },
+            "game_info": game_info_data
+        }
 
     def _handle_stage_win(self, winner_id):
         if self.stage_winner: return
@@ -268,9 +297,6 @@ class PlayerServerProtocol:
         return {"status": "OK"}
 
     def _player_at_exit(self, player_id):
-        """
-        PERBAIKAN: Memastikan fungsi ini selalu mengembalikan respons JSON yang valid.
-        """
         if self.match_winner or self.stage_winner:
             return {"status": "OK", "message": "Stage has already been won."}
         
@@ -278,12 +304,11 @@ class PlayerServerProtocol:
             player = self.players[player_id]
             player['at_exit'] = True
             
-            required = self.black_gems_required if player['color_type'] == 'black' else self.white_gems_required
+            required_gems = self.black_gems_required if player['color_type'] == 'black' else self.white_gems_required
             
-            if player['gems_collected'] >= required:
+            if player['gems_collected'] >= required_gems:
                 self._handle_stage_win(player_id)
             
-            # Selalu kembalikan status OK agar koneksi tidak putus
             return {"status": "OK", "message": "Player at exit processed."}
             
         return {"status": "ERROR", "message": "Player not found."}

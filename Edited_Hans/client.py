@@ -362,6 +362,17 @@ def main_game_loop():
             scores = game_info['scores']
             score_text = font_medium.render(f"Score: B {scores['player_black']} - W {scores['player_white']}", True, WHITE)
             screen.blit(score_text, (10, 10))
+            
+            # KODE BARU UNTUK MENAMPILKAN STATUS GEM
+            required_gems_map = game_info.get('required_gems', {})
+            player_color_type = local_player.color_type
+            if player_color_type in required_gems_map:
+                collected = local_player.gems_collected
+                required = required_gems_map[player_color_type]
+                gem_status_text = font_medium.render(f"Gems: {collected}/{required}", True, WHITE)
+                # Tampilkan di bawah skor
+                screen.blit(gem_status_text, (10, 40))
+            
             stage_text = font_medium.render(f"Stage: {game_info['current_stage']}/{game_info['total_stages']}", True, WHITE)
             screen.blit(stage_text, (WIDTH - stage_text.get_width() - 10, 10))
             elapsed_time = game_info['elapsed_time']
