@@ -392,7 +392,7 @@ class PlayerServerProtocol:
 
     # --- Reset Methods ---
 
-def _reset_game(self):
+    def _reset_game(self):
         """Resets the entire game to its initial state for a new match."""
         logging.warning(f"Server: Full game reset requested.")
         self._initialize_game_elements()
